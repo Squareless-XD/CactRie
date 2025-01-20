@@ -19,7 +19,11 @@ enum class RegModifier : uint8_t {
 };
 
 struct PseudoInstTranslator {
-  explicit PseudoInstTranslator(const LLVMContext& ctx, const Function &func) : func(func), logger(minilog::createFileLogger("pseudo-inst-translator.log")), ctx(ctx) {}
+  explicit PseudoInstTranslator(const LLVMContext &ctx, const Function &func)
+      : ctx(ctx), func(func),
+        logger(minilog::createFileLogger("pseudo-inst-translator.log")) {}
+  void translateConstantBinary(CRef<BasicBlock> bb, CRef<BinaryInst> binary);
+  void translateBinary(CRef<BasicBlock> bb, CRef<BinaryInst> binary);
   void translate();
   PseudoInstructionSequence pseudoInstSequence() const;
   std::unordered_map<CRef<BasicBlock>, std::vector<RiscvPseudoInstruction>>
@@ -35,6 +39,7 @@ private:
   toSimplePseudoInstruction(CRef<Instruction> inst);
   static RiscvPseudoInstruction toPseudoRet(CRef<RetInst> inst);
   void translateJump(CRef<BasicBlock> bb, CRef<BrInst> br);
+  void translateConstCmp(CRef<BasicBlock> bb, CRef<CmpInst> cmp);
   void translateCmp(CRef<BasicBlock> bb, CRef<CmpInst> cmp);
   void translateLoad(CRef<BasicBlock> bb, CRef<LoadInst> load);
   void translateStore(CRef<BasicBlock> Bb, CRef<StoreInst> load);

@@ -7,9 +7,9 @@ namespace llvm {
 
 void FunctionABIInfo::runOnFunction(const Function &func) {
   integerArgReg.emplace(
-      func.name(), std::array<std::string, kMaximumIntegerArgumentRegisters>{});
+      func.name(), std::vector<uint32_t>{});
   floatArgReg.emplace(
-      func.name(), std::array<std::string, kMaximumFloatArgumentRegisters>{});
+      func.name(), std::vector<uint32_t>{});
   argsInRegs.emplace(func.name(), std::vector<uint32_t>{});
   argsOnStack.emplace(func.name(), std::vector<uint32_t>{});
   localSize.emplace(func.name(), 0);
@@ -18,13 +18,13 @@ void FunctionABIInfo::runOnFunction(const Function &func) {
     if (auto arg = func.args()[i];
         arg->type()->isInteger() || arg->type()->isConvertibleToPointer()) {
       if (numIntArgRegUsed(func.name()) < kMaximumIntegerArgumentRegisters) {
-        integerArgReg[func.name()][numIntArgRegUsed(func.name())] = arg->name();
+        integerArgReg[func.name()].emplace_back(i);
         argsInRegs[func.name()].emplace_back(i);
       } else
         argsOnStack[func.name()].emplace_back(i);
     } else if (arg->type()->isFloatingPoint()) {
       if (numFloatArgRegUsed(func.name()) < kMaximumFloatArgumentRegisters) {
-        floatArgReg[func.name()][numFloatArgRegUsed(func.name())] = arg->name();
+        floatArgReg[func.name()].emplace_back(i);
         argsInRegs[func.name()].emplace_back(i);
       } else
         argsOnStack[func.name()].emplace_back(i);

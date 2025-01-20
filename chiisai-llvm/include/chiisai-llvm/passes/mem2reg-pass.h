@@ -16,6 +16,8 @@ struct PromoteMemToRegPass {
   explicit PromoteMemToRegPass()
       : logStream(std::make_unique<std::ofstream>("mem2reg.log")),
         logger(*logStream) {}
+  std::unordered_set<Ref<BasicBlock>>
+  computeLiveInBlocks(const Function &func, CRef<AllocaInst> alloca);
   void runOnFunction(Function &function);
 
 private:

@@ -40,16 +40,16 @@ arrayType
     CRef<ArrayType> typeRef,
 ]: LeftBracket IntegerLiteral Cross type RightBracket;
 
-globalIdentifier: At NamedIdentifier;
+globalIdentifier: GlobalName;
 
-localIdentifier: Percent (NamedIdentifier | IntegerLiteral);
+localIdentifier: LocalName | Percent IntegerLiteral;
 
 variable
     locals[
     bool isGlobal,
 ]: globalIdentifier | localIdentifier;
 
-literal : IntegerLiteral | HexLiteral;
+literal : Minus? IntegerLiteral | HexLiteral;
 
 immediatelyUsableValue
     locals[
@@ -105,7 +105,7 @@ parameter
      std::string argName,
 ]: type (localIdentifier)?;
 
-basicBlock: NamedIdentifier Colon instruction*;
+basicBlock: LabelName instruction*;
 
 instruction
   locals [

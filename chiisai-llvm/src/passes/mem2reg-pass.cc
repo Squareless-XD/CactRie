@@ -1,13 +1,13 @@
 //
 // Created by creeper on 12/17/24.
 //
-#include <queue>
-#include <unordered_set>
 #include <chiisai-llvm/basic-block.h>
 #include <chiisai-llvm/dominator-tree.h>
 #include <chiisai-llvm/function.h>
 #include <chiisai-llvm/passes/mem2reg-pass.h>
 #include <mystl/bit_vector.h>
+#include <queue>
+#include <unordered_set>
 
 namespace llvm {
 bool PromoteMemToRegPass::isPromotable(CRef<AllocaInst> ai) {
@@ -31,9 +31,10 @@ void PromoteMemToRegPass::renameAllocaInBlock(
   logger.info("############### processing block {} ###############",
               block->name());
   for (auto inst : block->instructions) {
-    if (isa<PhiInst>(inst) && isInsertedPhiInstForBlock(cast<PhiInst>(inst), block)) {
+    if (isa<PhiInst>(inst) &&
+        isInsertedPhiInstForBlock(cast<PhiInst>(inst), block)) {
       auto phi = cast<PhiInst>(inst);
-      const auto& name = '%' + extractAllocaNameFromPhiInst(phi);
+      const auto &name = '%' + extractAllocaNameFromPhiInst(phi);
       auto alloca = makeCRef(block->function().identifier(name));
       assert(isa<AllocaInst>(alloca));
       auto ai = cast<AllocaInst>(alloca);
@@ -46,8 +47,6 @@ void PromoteMemToRegPass::renameAllocaInBlock(
       if (!isa<AllocaInst>(si->pointer()))
         continue;
       auto ai = cast<AllocaInst>(si->pointer());
-      if (!mostRecentValue.contains(ai))
-        continue;
       mostRecentValue[ai] = si->value();
       logger.info("update most recent value for alloca inst {} to {}",
                   ai->name(), si->value()->name());
@@ -82,8 +81,8 @@ void PromoteMemToRegPass::fillPhiInst(
     auto phi = cast<PhiInst>(inst);
     if (!isInsertedPhiInstForBlock(phi, succ))
       continue;
-    logger.info("fill phi inst {} for block {} from block {}", phi->toString(), succ->name(),
-              current->name());
+    logger.info("fill phi inst {} for block {} from block {}", phi->toString(),
+                succ->name(), current->name());
     auto ai = toBePromote.at('%' + extractAllocaNameFromPhiInst(phi));
     if (!mostRecentValue.contains(ai) || mostRecentValue.at(ai) == nullptr)
       continue;
@@ -93,13 +92,54 @@ void PromoteMemToRegPass::fillPhiInst(
   }
 }
 
+std::unordered_set<Ref<BasicBlock>>
+PromoteMemToRegPass::computeLiveInBlocks(const Function &func,
+                                         CRef<AllocaInst> alloca) {
+  std::queue<Ref<BasicBlock>> workList{};
+  std::unordered_set<Ref<BasicBlock>> liveInBlockSet{};
+  std::unordered_set<CRef<BasicBlock>> defBlocks{};
+  for (auto user : alloca->users) {
+    assert(isa<Instruction>(user));
+    if (auto inst = cast<Instruction>(user); isa<StoreInst>(inst))
+      defBlocks.insert(makeCRef(inst->basicBlock));
+  }
+  for (auto block : func.basicBlockRefs()) {
+    for (auto inst : block->instructions) {
+      if (isa<StoreInst>(inst)) {
+        auto si = cast<StoreInst>(inst);
+        if (si->pointer() == alloca)
+          break;
+      }
+      if (isa<LoadInst>(inst)) {
+        auto li = cast<LoadInst>(inst);
+        if (li->pointer() == alloca) {
+          workList.emplace(block);
+          break;
+        }
+      }
+    }
+  }
+  while (!workList.empty()) {
+    auto block = workList.front();
+    workList.pop();
+    if (liveInBlockSet.contains(block))
+      continue;
+    liveInBlockSet.insert(block);
+    for (auto pred : block->predecessors) {
+      if (defBlocks.contains(pred))
+        continue;
+      workList.emplace(pred);
+    }
+  }
+  return liveInBlockSet;
+}
 void PromoteMemToRegPass::runOnFunction(Function &function) {
   DominatorTree domTree{};
   domTree.buildFromCFG(function);
   logger.info("<<<<<<<< running mem2reg on function {} >>>>>>>>",
               function.name());
   auto &entryBlock = function.basicBlock("entry");
-  std::unordered_map<CRef<AllocaInst>, Ref<Value>> mostRecentValue{};
+  std::unordered_map<CRef<BasicBlock>, std::unordered_map<CRef<AllocaInst>, Ref<Value>>> mostRecentValue{};
   std::unordered_map<std::string, Ref<AllocaInst>> toBePromote{};
   std::vector<CRef<AllocaInst>> unused{};
   for (auto inst : entryBlock.instructions) {
@@ -119,54 +159,41 @@ void PromoteMemToRegPass::runOnFunction(Function &function) {
     if (!isPromotable(ai))
       continue;
 
-    std::unordered_set<Ref<BasicBlock>> useBlock{};
-    std::unordered_set<Ref<BasicBlock>> defBlock{};
-    for (auto user : ai->users) {
-      auto userInst = cast<Instruction>(user);
-      if (isa<LoadInst>(userInst))
-        useBlock.insert(makeRef(userInst->basicBlock));
-      if (isa<StoreInst>(userInst))
-        defBlock.insert(makeRef(userInst->basicBlock));
-    }
+    std::unordered_set<Ref<BasicBlock>> liveInBlockSet =
+        computeLiveInBlocks(function, ai);
 
     auto dominanceLevelGreater = [&domTree](Ref<BasicBlock> a,
                                             Ref<BasicBlock> b) {
-      return domTree.dominanceLevel(a) > domTree.dominanceLevel(b);
+      return domTree.dominanceLevel(a) < domTree.dominanceLevel(b);
     };
 
     std::priority_queue<Ref<BasicBlock>, std::vector<Ref<BasicBlock>>,
                         decltype(dominanceLevelGreater)>
         liveInBlocks(dominanceLevelGreater);
 
-    for (auto block : useBlock) {
-      if (defBlock.contains(block))
-        continue;
+    for (auto block : liveInBlockSet)
       liveInBlocks.push(block);
-    }
 
     while (!liveInBlocks.empty()) {
       auto block = liveInBlocks.top();
       liveInBlocks.pop();
-      logger.info("processing dominance frontier of live-in block {}",
+      logger.info("processing dominance frontiers of live-in block {}",
                   block->name());
       for (auto dfBlock : domTree.dominanceFrontier(block)) {
         std::vector<PhiValue> phiValues(dfBlock->predecessors.size());
-        auto idx = 0;
-        for (auto pred : dfBlock->predecessors) {
-          auto &[basicBlock, value] = phiValues[idx];
-          basicBlock = pred;
-          value = {};
-          idx++;
+        if (dfBlock->hasIdentifier(nameInsertedPhiInst(ai, dfBlock))) {
+          logger.info("phi inst {} already exists in block {}, skip",
+                      nameInsertedPhiInst(ai, dfBlock), dfBlock->name());
+          continue;
         }
         auto phi = std::make_unique<PhiInst>(
-            *dfBlock, PhiInstDetails{nameInsertedPhiInst(ai, dfBlock),
-                                     holderType, {}});
+            *dfBlock,
+            PhiInstDetails{nameInsertedPhiInst(ai, dfBlock), holderType, {}});
         logger.info("insert phi inst {} to block {}", phi->name(),
                     dfBlock->name());
         dfBlock->addInstructionFront(std::move(phi));
       }
     }
-    mostRecentValue.insert({ai, {}});
     toBePromote.insert({ai->name(), ai});
   }
   for (auto unusedAlloca : unused)
@@ -179,11 +206,12 @@ void PromoteMemToRegPass::runOnFunction(Function &function) {
   while (!workList.empty()) {
     auto currentBlock = workList.front();
     workList.pop();
-    renameAllocaInBlock(currentBlock, mostRecentValue);
+    renameAllocaInBlock(currentBlock, mostRecentValue[currentBlock]);
     for (auto succ : currentBlock->successors) {
-      fillPhiInst(currentBlock, succ, toBePromote, mostRecentValue);
+      fillPhiInst(currentBlock, succ, toBePromote, mostRecentValue[currentBlock]);
       if (visited.contains(succ))
         continue;
+      mostRecentValue[succ] = mostRecentValue[currentBlock];
       workList.push(succ);
       visited.insert(succ);
     }

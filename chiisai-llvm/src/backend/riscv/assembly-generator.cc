@@ -31,7 +31,7 @@ RiscvAssemblyCodeGenerator::decideReturnReg(const std::string &vReg) const {
     if (isConstantHex(vReg))
       return "fa0";
   }
-  if (vRegModifier.contains(vReg))
+  if (isFloatingPoint(vReg))
     return "fa0";
   return "a0";
 }
@@ -143,7 +143,8 @@ RiscvAssemblyCodeGenerator::prepareImmediatelyUsableRegs(
     } else {
       if (isConstant(reg))
         regs[reg] = reg;
-      else regs[reg] = regAllocInfo.regMap.at(reg);
+      else
+        regs[reg] = regAllocInfo.regMap.at(reg);
     }
   }
   return regs;
@@ -303,8 +304,9 @@ void RiscvAssemblyCodeGenerator::binaryOp(const std::string &result,
   if (isConstant(lhs) || isConstant(rhs))
     assembly += std::format("  {}i {}, {}, {}\n", binaryCode(op, modifier),
                             result, lhs, rhs);
-  else assembly += std::format("  {} {}, {}, {}\n", binaryCode(op, modifier),
-                               result, lhs, rhs);
+  else
+    assembly += std::format("  {} {}, {}, {}\n", binaryCode(op, modifier),
+                            result, lhs, rhs);
 }
 
 void RiscvAssemblyCodeGenerator::comparisonOp(const std::string &result,
@@ -352,7 +354,7 @@ void RiscvAssemblyCodeGenerator::prepareArgsForCall(
     if (isSpilled(inst.args[i]))
       loadFromStack(argReg, stackFrame->spilledRegOffset(inst.args[i]),
                     getRegModifier(inst.args[i]));
-    else
+    else if (regAllocInfo.regMap.at(inst.args[i]) != argReg)
       regMove(argReg, regAllocInfo.regMap.at(inst.args[i]),
               getRegModifier(inst.args[i]));
   }
@@ -397,6 +399,66 @@ std::string RiscvAssemblyCodeGenerator::generate(const Function &func) {
   assembly += func.name() + ":\n";
   std::set<std::string> calleeRegsToSave{};
   uint32_t maxCallerSavedContextSize = 0;
+
+  uint32_t maxTemporaryIntRegNeeded = 0;
+  uint32_t maxTemporaryFpRegNeeded = 0;
+  for (auto &inst : pseudoInstSeq.insts) {
+    uint32_t tmpIntRegNeeded = 0;
+    uint32_t tmpFpRegNeeded = 0;
+    auto updateTempRegCount = [&](const std::string &vReg) {
+      if (isSpilled(vReg)) {
+        if (isFloatingPoint(vReg))
+          tmpFpRegNeeded++;
+        else
+          tmpIntRegNeeded++;
+      }
+    };
+    // for call, we only need a temp reg when there are spilled args that are
+    // passed on stack
+    if (isCall(inst)) {
+      const auto &callInst = std::get<RiscvPseudoCall>(inst);
+      const auto &argsOnStack = abiInfo.argsOnStack.at(callInst.func);
+      for (const auto &argIdx : argsOnStack) {
+        const auto &arg = callInst.args[argIdx];
+        if (!isSpilled(arg))
+          continue;
+        if (isFloatingPoint(arg))
+          tmpFpRegNeeded = 1;
+        else
+          tmpIntRegNeeded = 1;
+      }
+    }
+
+    // for cmp, we need an additional temp reg for constant
+    if (isCmp(inst)) {
+      const auto &cmpInst = std::get<RiscvPseudoCmp>(inst);
+      if (isConstant(cmpInst.lhs)) {
+        if (isConstantHex(cmpInst.lhs))
+          tmpFpRegNeeded++;
+        else
+          tmpIntRegNeeded++;
+      } else
+        updateTempRegCount(cmpInst.lhs);
+      if (isConstant(cmpInst.rhs)) {
+        if (isConstantHex(cmpInst.rhs))
+          tmpFpRegNeeded++;
+        else
+          tmpIntRegNeeded++;
+      } else
+        updateTempRegCount(cmpInst.rhs);
+      updateTempRegCount(cmpInst.dest);
+    }
+    // in other cases, we need a temp reg for each spilled value
+    forRegs(inst, [&](const std::string &vReg) { updateTempRegCount(vReg); });
+    maxTemporaryIntRegNeeded =
+        std::max(maxTemporaryIntRegNeeded, tmpIntRegNeeded);
+    maxTemporaryFpRegNeeded = std::max(maxTemporaryFpRegNeeded, tmpFpRegNeeded);
+  }
+  for (auto i = 0; i < maxTemporaryIntRegNeeded; i++)
+    calleeRegsToSave.insert(stdCfg.tmpReg(i));
+  for (auto i = 0; i < maxTemporaryFpRegNeeded; i++)
+    calleeRegsToSave.insert(fpCfg.tmpReg(i));
+
   for (auto i = 0; i < pseudoInstSeq.insts.size(); i++) {
     forDefinedRegs(pseudoInstSeq.insts[i], [&](const std::string &vReg) {
       if (isSpilled(vReg))
@@ -425,7 +487,8 @@ std::string RiscvAssemblyCodeGenerator::generate(const Function &func) {
   assembly += saveCalleeContext();
 
   for (auto i = 0; i < abiInfo.numIntArgRegUsed(func.name()); i++) {
-    if (const auto &arg = abiInfo.integerArgReg.at(func.name())[i];
+    if (const auto &arg =
+            func.args()[abiInfo.integerArgReg.at(func.name())[i]]->name();
         isSpilled(arg)) {
       storeToStack(stdCfg.argRegs[i], stackFrame->spilledRegOffset(arg),
                    getRegModifier(arg));
@@ -434,7 +497,8 @@ std::string RiscvAssemblyCodeGenerator::generate(const Function &func) {
   }
 
   for (auto i = 0; i < abiInfo.numFloatArgRegUsed(func.name()); i++) {
-    if (const auto &arg = abiInfo.floatArgReg.at(func.name())[i];
+    if (const auto &arg =
+            func.args()[abiInfo.floatArgReg.at(func.name())[i]]->name();
         isSpilled(arg)) {
       storeToStack(fpCfg.argRegs[i], stackFrame->spilledRegOffset(arg),
                    getRegModifier(arg));
@@ -442,7 +506,7 @@ std::string RiscvAssemblyCodeGenerator::generate(const Function &func) {
       assert(regAllocInfo.regMap.at(arg) == fpCfg.argRegs[i]);
   }
 
-  uint32_t stackArgSpaceSize = abiInfo.argsOnStack.size() * 8;
+  uint32_t stackArgSpaceSize = abiInfo.argsOnStack.at(func.name()).size() * 8;
   for (auto i = 0; i < abiInfo.argsOnStack.at(func.name()).size(); i++) {
     const auto &arg =
         func.args()[abiInfo.argsOnStack.at(func.name())[i]]->name();
@@ -498,6 +562,18 @@ std::string RiscvAssemblyCodeGenerator::generate(const Function &func) {
                 loadImmediate(reg, inst.src);
                 finalizeInstruction(inst.dest, reg);
                 return;
+              }
+              if (isSpilled(inst.src) && !isSpilled(inst.dest)) {
+                auto reg = prepareImmediatelyUsableRegs(inst.dest, true);
+                loadFromStack(reg, stackFrame->spilledRegOffset(inst.src),
+                              getRegModifier(inst.src));
+                return;
+              }
+              if (isSpilled(inst.dest) && !isSpilled(inst.src)) {
+                auto reg = regAllocInfo.regMap.at(inst.src);
+                storeToStack(reg, stackFrame->spilledRegOffset(inst.dest),
+                             getRegModifier(inst.dest));
+                return ;
               }
               auto regs =
                   prepareImmediatelyUsableRegs(inst.src, inst.dest, inst.dest);

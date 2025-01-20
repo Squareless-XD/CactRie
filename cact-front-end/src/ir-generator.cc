@@ -184,8 +184,8 @@ std::any LLVMIRGenerator::visitFunctionDefinition(CactParser::FunctionDefinition
   static std::map<CactBasicType, std::string> defaultReturn = {
       {CactBasicType::Void, "void"},
       {CactBasicType::Int32, "i32 0"},
-      {CactBasicType::Float, "float 0.0"},
-      {CactBasicType::Double, "double 0.0"},
+      {CactBasicType::Float, "float 0x00000000"},
+      {CactBasicType::Double, "double 0x0000000000000000"},
       {CactBasicType::Bool, "i1 0"},
   };
   // this is to remove possible dangling labels

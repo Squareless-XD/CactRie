@@ -27,7 +27,7 @@ Sub: 'sub';
 FSub: 'fsub';
 Mul: 'mul';
 FMul: 'fmul';
-Div: 'div';
+Div: 'sdiv';
 FDiv: 'fdiv';
 And: 'and';
 Srem: 'srem';
@@ -81,10 +81,12 @@ Percent: '%';
 Asterisk: '*';
 Colon: ':';
 Cross: 'x';
+Minus: '-';
 SourceFilename: 'source_filename';
 
-NamedIdentifier: [a-zA-Z_.][a-zA-Z0-9_.]*;
-
+GlobalName: '@'[a-zA-Z_.][a-zA-Z0-9_.]*;
+LocalName: '%'[a-zA-Z_.][a-zA-Z0-9_.]*;
+LabelName: [a-zA-Z_.][a-zA-Z0-9_.]*':';
 // Integer literals
 IntegerLiteral: '0' | [1-9][0-9]*;
 

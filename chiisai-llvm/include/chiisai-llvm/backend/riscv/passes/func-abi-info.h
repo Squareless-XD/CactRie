@@ -18,27 +18,22 @@ struct FunctionABIInfo {
 
   uint32_t numIntArgRegUsed(const std::string &func) const {
     const auto &intArgRegs = integerArgReg.at(func);
-    return std::count_if(intArgRegs.begin(), intArgRegs.end(),
-                         [](const std::string &reg) { return !reg.empty(); });
+    return intArgRegs.size();
   }
 
   uint32_t numFloatArgRegUsed(const std::string &func) const {
     const auto &floatArgRegs = floatArgReg.at(func);
-    return std::count_if(floatArgRegs.begin(), floatArgRegs.end(),
-                         [](const std::string &reg) { return !reg.empty(); });
+    return floatArgRegs.size();
   }
 
   std::optional<uint32_t> getIntArgRegIdx(const std::string &func,
                                           uint32_t argIdx) const {
     const auto &intArgRegs = integerArgReg.at(func);
     auto function = module.function(func);
-    const auto &argName = function->args()[argIdx]->name();
-    auto it = std::ranges::find(intArgRegs, argName);
+    auto it = std::ranges::find(intArgRegs, argIdx);
     if (it == intArgRegs.end())
       return std::nullopt;
     auto idx = std::distance(intArgRegs.begin(), it);
-    if (integerArgReg.at(func)[idx].empty())
-      return std::nullopt;
     return idx;
   }
 
@@ -46,24 +41,17 @@ struct FunctionABIInfo {
                                             uint32_t argIdx) const {
     const auto &floatArgRegs = floatArgReg.at(func);
     auto function = module.function(func);
-    const auto &argName = function->args()[argIdx]->name();
-    auto it = std::ranges::find(floatArgRegs, argName);
+    auto it = std::ranges::find(floatArgRegs, argIdx);
 
     if (it == floatArgRegs.end())
       return std::nullopt;
     auto idx = std::distance(floatArgRegs.begin(), it);
-        if (floatArgReg.at(func)[idx].empty())
-          return std::nullopt;
     return idx;
   }
 
   const Module &module;
-  std::unordered_map<std::string,
-                     std::array<std::string, kMaximumIntegerArgumentRegisters>>
-      integerArgReg;
-  std::unordered_map<std::string,
-                     std::array<std::string, kMaximumFloatArgumentRegisters>>
-      floatArgReg;
+  std::unordered_map<std::string, std::vector<uint32_t>> integerArgReg;
+  std::unordered_map<std::string, std::vector<uint32_t>> floatArgReg;
   std::unordered_map<std::string, std::vector<uint32_t>> argsInRegs;
   std::unordered_map<std::string, std::vector<uint32_t>> argsOnStack;
   std::unordered_map<std::string, std::unordered_map<std::string, int32_t>>

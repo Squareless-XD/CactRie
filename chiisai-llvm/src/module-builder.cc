@@ -126,7 +126,7 @@ formContainedTypes(CRef<Type> returnType, std::vector<CRef<Type>> &&argTypes) {
 std::any ModuleBuilder::visitFunctionDeclaration(
     LLVMParser::FunctionDeclarationContext *ctx) {
   auto returnTypeCtx = ctx->type();
-  auto funcName = ctx->globalIdentifier()->NamedIdentifier()->getText();
+  auto funcName = ctx->globalIdentifier()->getText().substr(1);
 
   if (module->hasFunction(funcName))
     throw std::runtime_error("Function name already exists in the module");
@@ -166,7 +166,7 @@ static void moveAllocasInEntryBlock(BasicBlock &entryBlock) {
 std::any ModuleBuilder::visitFunctionDefinition(
     LLVMParser::FunctionDefinitionContext *ctx) {
   auto returnTypeCtx = ctx->type();
-  auto funcName = ctx->globalIdentifier()->NamedIdentifier()->getText();
+  auto funcName = ctx->globalIdentifier()->getText().substr(1);
 
   if (module->hasFunction(funcName))
     throw std::runtime_error("Function name already exists in the module");
@@ -197,7 +197,8 @@ std::any ModuleBuilder::visitFunctionDefinition(
   auto newFunc = module->function(funcName);
   currentFunction = newFunc;
   for (auto bb : basicBlocks) {
-    auto blockName = bb->NamedIdentifier()->getText();
+    auto blockName = bb->LabelName()->getText().substr(
+        0, bb->LabelName()->getText().size() - 1);
     currentFunction->addBasicBlock(std::make_unique<BasicBlock>(
         blockName, llvmContext->labelType(), newFunc));
   }
@@ -208,7 +209,8 @@ std::any ModuleBuilder::visitFunctionDefinition(
 }
 std::any ModuleBuilder::visitBasicBlock(LLVMParser::BasicBlockContext *ctx) {
   currentBasicBlock =
-      makeRef(currentFunction->basicBlock(ctx->NamedIdentifier()->getText()));
+      makeRef(currentFunction->basicBlock(ctx->LabelName()->getText().substr(
+          0, ctx->LabelName()->getText().size() - 1)));
   for (const auto &instructions = ctx->instruction(); auto inst : instructions)
     visitInstruction(inst);
   return {};

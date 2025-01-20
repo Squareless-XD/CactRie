@@ -19,23 +19,22 @@
 using namespace llvm;
 
 int main(int argc, char **argv) {
-  if (argc != 3) {
-    std::cerr << std::format("Usage: {} <input-file> <function>\n", argv[0]);
+  if (argc != 2) {
+    std::cerr << std::format("Usage: {} <input-file>\n", argv[0]);
     return 1;
   }
   std::filesystem::path input(argv[1]);
   auto [module, llvmContext] = buildModule(input);
-  if (!module->hasFunction(argv[2])) {
-    std::cerr << std::format("Function {} not found in module", argv[2])
-              << std::endl;
-    return 1;
-  }
-  {
-    auto function = module->function(argv[2]);
+  for (auto function : module->functions) {
+    if (!function->isImplemented()) continue;
     SingleJumpEliminationPass().runOnFunction(*function);
     PromoteMemToRegPass().runOnFunction(*function);
     UselessArithEliminationPass(*llvmContext).runOnFunction(*function);
   }
-  std::cout << RiscvBackend(*llvmContext).generateAssembly(*module) << std::endl;
+  auto srcFileName = input.stem().string();
+  std::filesystem::path output = srcFileName + ".asm";
+  std::ofstream file(output);
+  file << RiscvBackend(*llvmContext).generateAssembly(*module);
+  std::cout << "assembly has been saved to " << output << std::endl;
   return 0;
 }
